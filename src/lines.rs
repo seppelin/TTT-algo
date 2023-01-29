@@ -3,16 +3,12 @@ pub(crate) use line_row::*;
 
 use crate::AlgoPos;
 
-pub(crate) struct Changes{
-    
-}
-
 pub(crate) struct Lines{
 	left_right: [LineRow; 20],
 	up_down: [LineRow; 20],
 	lu_rd: [LineRow; 40],
 	ru_lf: [LineRow; 40],
-    values: [[[i16; 2]; 20]; 20]
+    values: [[i16; 20]; 20]
 }
 
 impl Lines {
@@ -21,21 +17,30 @@ impl Lines {
     	let up_down = left_right.clone();
     	let lu_rd = Self::create_diag();
     	let ru_lf = Self::create_diag();
-    	Lines { left_right, up_down, lu_rd, ru_lf, values: [[[0; 2]; 20]; 20] }
+    	Lines { left_right, up_down, lu_rd, ru_lf, values: [[0; 20]; 20] }
     }
 
     pub(crate) fn update_move(&mut self, pos: AlgoPos, sign: bool){
-    	// Left right
+    	self.values[pos.w as usize][pos.h as usize] = 0;
+        
         let update_rows: [*mut LineRow; 4] = [&mut self.left_right[pos.h as usize],
             &mut self.up_down[pos.w as usize],
             &mut self.lu_rd[(pos.w - pos.h + 20) as usize],
             &mut self.ru_lf[(pos.w + pos.h) as usize]];
 
-        unsafe{ LineRow::update_rows(update_rows, pos, sign) }
+        let changes = unsafe{ LineRow::update_rows(update_rows, pos, sign) };
+
+        Self::update_values(&mut self.values, changes);
     }
 
-    pub(crate) fn get_values(&self) -> &[[[i16; 2]; 20]; 20] {
-        &&self.values
+    fn update_values(values: &mut [[i16; 20]; 20], changes: Vec<(AlgoPos, i16)>){
+        for change in changes{
+            values[change.0.w as usize][change.0.h as usize] += change.1;
+        }
+    }
+
+    pub(crate) fn get_values(&self) -> &[[i16; 20]; 20] {
+        &self.values
     }
 
     pub(crate) fn print(&self){

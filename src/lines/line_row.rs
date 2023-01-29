@@ -1,6 +1,16 @@
 use crate::{AlgoPos, DIRECTIONS};
 use std::cmp::{max, min};
 
+trait GetValue{
+    fn get_value(&self) -> i16;
+}
+
+impl GetValue for u8 {
+    fn get_value(&self) -> i16 {
+        *self as i16 * *self as i16
+    }
+}
+
 pub(crate) struct LineRow{
 	lines: Vec<Line>
 }
@@ -16,26 +26,22 @@ impl LineRow {
 
     pub(crate) fn print(&self){
         for i in &self.lines{
-            let p1_state = match &i.active {
-                LineActive::P2 => "off",
-                _ => "on",
+            let state = match &i.active{
+                LineActive::ONE => "One",
+                LineActive::BOTH => "Both",
             };
-            let p2_state = match &i.active {
-                LineActive::P1 => "off",
-                _ => "on",
-            };
-            println!("Line{{ P1: {} {} {}, P2: {} {} {}, LEN: {}, Sign: {} }}", i.p1.w, i.p1.h, p1_state,
-                i.p2.w, i.p2.h, p2_state, i.len, i.sign)
+            println!("Line{{ {} P1: {} {}, P2: {} {}, LEN: {}, Sign: {} }}", state, i.p1.w, i.p1.h,
+                i.p2.w, i.p2.h, i.len, i.sign)
         }
     }
 
     pub(crate) fn get_lines(&mut self) -> &mut Vec<Line>{ &mut self.lines }
 
-    fn get(&mut self, i: i8) -> &mut Line{
-        &mut self.lines[i as usize]
-    }
+    fn get(&mut self, i: i8) -> &mut Line{ &mut self.lines[i as usize] }
 
-    pub(super) unsafe fn update_rows(rows: [*mut LineRow; 4], pos: AlgoPos, sign: bool){ // rows: the ones for the four directions of the point     
+    pub(super) unsafe fn update_rows(rows: [*mut LineRow; 4], pos: AlgoPos, sign: bool) -> Vec<(AlgoPos, i16)>{ // rows: the ones for the four directions of the point     
+        // Value of pos is already removed!
+        let mut changes = Vec::new();
         enum State{
             NONE,
             P1(i8),
@@ -43,8 +49,6 @@ impl LineRow {
             BOTH(i8, i8)
         }
         for dir in 0..4{
-            let d1 = DIRECTIONS[dir*2];
-            let d2 = DIRECTIONS[dir*2 + 1];
             let row = &mut *rows[dir];
 
             let mut state = State::NONE;
@@ -66,219 +70,365 @@ impl LineRow {
             }
 
             match state{
-                State::NONE => { // Next to pos are no symbols -> a new line both active len 1
-                    // The two points for the new line
-                    println!("None");
-                    let p1 = d1 + pos;
-                    let p2 = d2 + pos;
-                    let mut active = LineActive::BOTH;
-                    // If the points are not in the field
-                    if !p1.is_valid(){
-                        if !p2.is_valid(){
-                            continue; // Both points are invalid -> not adding the line
-                        }
-                        active = LineActive::P2;
-                    }
-                    else if !p2.is_valid(){
-                        active = LineActive::P1;
-                    }
-                    row.lines.push(Line { p1, p2, active, sign, len: 1 })
-                }
+                State::NONE => Self::none(dir, pos, sign, row, &mut changes),
 
-                State::P1(i1) => { // Pos is p1 of a line, other field next to it is empty
-                    let l1 = row.get(i1);
-                    println!("p1");
-                    if l1.sign == sign{ // Making one long line
-                        if !l1.p1.is_valid(){ // If new point is invalid
-                            println!("uhh");
-                            match &l1.active {
-                                LineActive::P1 => { // Line has no actives anymore -> removing it!
-                                    drop(l1);
-                                    row.lines.remove(i1 as usize);
-                                    continue;
-                                } 
-                                LineActive::P2 => panic!("Logic error: Pos can't be invalid!"),
-                                LineActive::BOTH => l1.active = LineActive::P1,
-                            }
-                        }
-                        l1.len += 1;
+                State::P1(i1) => Self::p1(dir, pos, sign, i1, row, &mut changes),
+
+                State::P2(i2) => Self::p2(dir, pos, sign, i2, row, &mut changes),
+
+                State::BOTH(i1, i2) => Self::both(sign, i1, i2, row, &mut changes)
+            }
+        }
+        changes
+    }
+
+    fn none(dir: usize, pos: AlgoPos, sign: bool, row: &mut LineRow, changes: &mut Vec<(AlgoPos, i16)>){
+        let p1 = DIRECTIONS[dir*2] + pos;
+        let p2 = DIRECTIONS[dir*2+1] + pos;
+
+        // If the points are not in the field
+        let active = if !p1.is_valid(){
+            if !p2.is_valid(){
+                return; // Both points are invalid -> not adding the line
+            }
+            changes.push((p2, 1));
+            LineActive::ONE
+        }
+        else if !p2.is_valid(){
+            changes.push((p1, 1));
+            LineActive::ONE
+        }
+        else{
+            changes.push((p1, 2));
+            changes.push((p2, 2));
+            LineActive::BOTH
+        };
+
+        row.lines.push(Line { p1, p2, active, sign, len: 1 });
+    }
+
+    fn p1(dir: usize, pos: AlgoPos, sign: bool, i1: i8, row: &mut LineRow, changes: &mut Vec<(AlgoPos, i16)>){
+        let l1 = row.get(i1);
+
+        // Making one long line
+        if l1.sign == sign{
+            l1.p1 = DIRECTIONS[dir*2] + pos;
+
+            // Only active at pos
+            if l1.active == LineActive::ONE{
+                if l1.p1.is_valid(){
+                    l1.len += 1;
+                    changes.push((l1.p1, l1.len.get_value()))
+                }
+                else{
+                    row.lines.remove(i1 as usize);
+                }
+            }
+            else{
+                changes.push((l1.p2, -2*l1.len.get_value()));
+
+                if l1.p1.is_valid(){
+                    l1.len += 1;
+                    changes.push((l1.p1, 2*l1.len.get_value()));
+                    changes.push((l1.p2, 2*l1.len.get_value()));
+                }
+                else{
+                    l1.active = LineActive::ONE;
+                    l1.len += 1;
+                    changes.push((l1.p2, l1.len.get_value()));
+                }
+            }
+        }
+
+        // Ending the line at pos
+        else{
+            if l1.active == LineActive::ONE{
+                row.lines.remove(i1 as usize);
+            }
+            else{
+                changes.push((l1.p2, -l1.len.get_value()));
+                l1.active = LineActive::ONE;
+            }
+
+            // If next to pos is valid adding line to pos
+            let p1 = pos + DIRECTIONS[dir*2];
+            if p1.is_valid() {
+                changes.push((p1, 1));
+                row.lines.push(Line { 
+                    p1: p1,
+                    p2: pos + DIRECTIONS[dir*2+1],
+                    active: LineActive::ONE,
+                    sign: sign,
+                    len: 1 
+                });
+            }
+        }
+    }
+
+    fn p2(dir: usize, pos: AlgoPos, sign: bool, i2: i8, row: &mut LineRow, changes: &mut Vec<(AlgoPos, i16)>){
+        let l2 = row.get(i2);
+
+        // Making one long line
+        if l2.sign == sign{
+            l2.p2 = DIRECTIONS[dir*2+1] + pos;
+
+            // Only active at pos
+            if l2.active == LineActive::ONE{
+                if l2.p2.is_valid(){
+                    l2.len += 1;
+                    changes.push((l2.p2, l2.len.get_value()))
+                }
+                else{
+                    row.lines.remove(i2 as usize);
+                }
+            }
+            else{
+                changes.push((l2.p1, -2*l2.len.get_value()));
+
+                if l2.p2.is_valid(){
+                    l2.len += 1;
+                    changes.push((l2.p1, 2*l2.len.get_value()));
+                    changes.push((l2.p2, 2*l2.len.get_value()));
+                }
+                else{
+                    l2.active = LineActive::ONE;
+                    l2.len += 1;
+                    changes.push((l2.p1, l2.len.get_value()));
+                }
+            }
+        }
+
+        // Ending the line at pos
+        else{
+            if l2.active == LineActive::ONE{
+                row.lines.remove(i2 as usize);
+            }
+            else{
+                changes.push((l2.p2, -l2.len.get_value()));
+                l2.active = LineActive::ONE;
+            }
+
+            // If next to pos is valid adding line to pos
+            let p2 = pos + DIRECTIONS[dir*2+1];
+            if p2.is_valid() {
+                changes.push((p2, 1));
+                row.lines.push(Line { 
+                    p1: pos + DIRECTIONS[dir*2],
+                    p2: p2,
+                    active: LineActive::ONE,
+                    sign: sign,
+                    len: 1 
+                });
+            }
+        }
+    }
+
+    fn both(sign: bool, i1: i8, i2: i8, row: &mut LineRow, changes: &mut Vec<(AlgoPos, i16)>){
+        if row.get(i1).sign == sign{
+
+            // Making one long line!
+            if row.get(i2).sign == sign{
+                let l2 = row.get(i2).clone();
+                let l1 = row.get(i1);
+
+                if l1.active == LineActive::ONE{
+                    // Both had only pos active -> removing lines
+                    if l2.active == LineActive::ONE{
+                        row.lines.remove(max(i1 as usize, i2 as usize));
+                        row.lines.remove(min(i1 as usize, i2 as usize));
                     }
+                    // L2 has both active, L1 only pos -> L1 just gets longer
                     else{
-                        match &l1.active {
-                            LineActive::P1 => { // Line has no actives anymore -> removing it!
-                                drop(l1);
-                                row.lines.remove(i1 as usize);
-                            }
-                            LineActive::P2 => panic!("Logic error: Pos can't be invalid!"),
-                            LineActive::BOTH => l1.active = LineActive::P1,
-                        }
-                        if !(pos + d1).is_valid() {
-                            continue;
-                        }
-                        row.lines.push(Line { 
-                            p1: pos + d1,
-                            p2: pos,
-                            active: LineActive::P1,
-                            sign: sign,
-                            len: 1 
-                        });
+                        changes.push((l2.p1, -2*l2.len.get_value()));
+
+                        l1.len += l2.len + 1;
+                        l1.p1 = l2.p1;
+
+                        changes.push((l1.p1, l1.len.get_value()));
+
+                        row.lines.remove(i2 as usize);
                     }
                 }
+                else{
+                    // The new p1 is not active anymore -> ONE active
+                    if l2.active == LineActive::ONE{
+                        changes.push((l1.p2, -2*l1.len.get_value()));
 
-                State::P2(i2) => { // Pos is p1 of a line, other field next to it is empty
-                    let l2 = row.get(i2);
-                    println!("p2");
-                    if l2.sign == sign{ // Making one long line
-                        l2.p2 = pos + d2;
-                        if !l2.p2.is_valid(){ // If new point is invalid
-                            println!("uhh");
-                            match &l2.active {
-                                LineActive::P2 => { // Line has no actives anymore -> removing it!
-                                    drop(l2);
-                                    row.lines.remove(i2 as usize);
-                                    continue;
-                                } 
-                                LineActive::P1 => panic!("Logic error: Pos can't be invalid!"),
-                                LineActive::BOTH => l2.active = LineActive::P2,
-                            }
-                        }
-                        l2.len += 1;
+                        l1.len += l2.len + 1;
+                        l1.active = LineActive::ONE;
+                        l1.p1 = l2.p1;
+
+                        changes.push((l1.p2, l1.len.get_value()));
+
+                        row.lines.remove(i2 as usize);
                     }
+                    // L1 and L2 were BOTH active -> one long line, BOTH active
                     else{
-                        match &l2.active {
-                            LineActive::P2 => { // Line has no actives anymore -> removing it!
-                                drop(l2);
-                                row.lines.remove(i2 as usize);
-                            }
-                            LineActive::P1 => panic!("Logic error: Pos can't be invalid!"),
-                            LineActive::BOTH => l2.active = LineActive::P2,
-                        }
-                        if !(pos + d2).is_valid() {
-                            continue;
-                        }
-                        row.lines.push(Line { 
-                            p1: pos,
-                            p2: pos + d2,
-                            active: LineActive::P2,
-                            sign: sign,
-                            len: 1
-                        });
+                        changes.push((l1.p2, -2*l1.len.get_value()));
+                        changes.push((l2.p1, -2*l2.len.get_value()));
+
+                        l1.p1 = l2.p1;
+                        l1.len += l2.len + 1;
+
+                        changes.push((l1.p1, 2*l1.len.get_value()));
+                        changes.push((l1.p2, 2*l1.len.get_value()));
                     }
                 }
+            }
 
-                State::BOTH(i1, i2) => {
-                    println!("both");
-                    if row.get(i1).sign == sign{
-                        if row.get(i2).sign == sign{ // Making one long line!
-                            let l2 = row.get(i2).clone();
+            // Ending l2 at pos, l1 after pos
+            else{
+                if row.get(i1).active == LineActive::ONE{
+                    // Both had only pos active -> removing them
+                    if row.get(i2).active == LineActive::ONE{
+                        row.lines.remove(max(i1 as usize, i2 as usize));
+                        row.lines.remove(min(i1 as usize, i2 as usize));
+                    }
+                    // Removing l1, updating l2
+                    else{
+                        {
+                            let l2 = row.get(i2);
+
+                            l2.active = LineActive::ONE;
+                            changes.push((l2.p1, -l2.len.get_value()));
+                        }
+                        row.lines.remove(i1 as usize);
+                    }
+                }
+                else{
+                    // Removing l2, updating l1 + adding pos
+                    if row.get(i2).active == LineActive::ONE{
+                        {
+                            let l1 = row.get(i1);
+                            changes.push((l1.p2, -2*l1.len.get_value()));
+
+                            l1.active = LineActive::ONE;
+                            l1.len += 1;
+
+                            changes.push((l1.p2, l1.len.get_value()));
+                        }
+                        row.lines.remove(i2 as usize);
+                    }
+                    // Updating both, adding pos to l1
+                    else{
+                        {
+                            let l2 = row.get(i2);
+
+                            l2.active = LineActive::ONE;
+                            changes.push((l2.p1, -l2.len.get_value()));
+                        }
+                        {
+                            let l1 = row.get(i1);
+                            changes.push((l1.p2, -2*l1.len.get_value()));
+
+                            l1.active = LineActive::ONE;
+                            l1.len += 1;
+
+                            changes.push((l1.p2, l1.len.get_value()));
+                        }
+                    }
+                }
+            }
+        }
+        else{
+            // Ending l1 at pos, l2 after pos
+            if row.get(i2).sign == sign{
+                if row.get(i1).active == LineActive::ONE{
+                    // Both had only pos active -> removing them
+                    if row.get(i2).active == LineActive::ONE{
+                        row.lines.remove(max(i1 as usize, i2 as usize));
+                        row.lines.remove(min(i1 as usize, i2 as usize));
+                    }
+                    
+                    // Removing l1, updating l2 + adding pos
+                    else{
+                        {
+                            let l2 = row.get(i2);
+                            changes.push((l2.p1, -2*l2.len.get_value()));
+
+                            l2.active = LineActive::ONE;
+                            l2.len += 1;
+
+                            changes.push((l2.p1, l2.len.get_value()));
+                        }
+                        row.lines.remove(i1 as usize);
+                        
+                    }
+                }
+                else{
+                    // Removing l2, updating l1
+                    if row.get(i2).active == LineActive::ONE{
+                        {
                             let l1 = row.get(i1);
 
-                            l1.len += l2.len + 1;
-                            l1.p1 = l2.p1;
-
-                            match &l2.active {
-                                LineActive::P2 => {
-                                    match &l1.active {
-                                        LineActive::P1 => { // Both aren't active anymore -> removing line
-                                            drop(l1);
-                                            row.lines.remove(max(i1 as usize, i2 as usize));
-                                            row.lines.remove(min(i1 as usize, i2 as usize));
-                                            continue;
-                                        }
-                                        LineActive::P2 => panic!("Logic error: Pos can't be invalid!"),
-                                        LineActive::BOTH => l1.active = LineActive::P2, // The new p1 is not active anymore -> only P2 active
-                                    }
-                                }
-                                LineActive::P1 => panic!("Logic error: Pos can't be invalid!"),
-                                LineActive::BOTH => (), // Nothing changes: l2.p1 is active && l1.p1 was active
-                            }
-                            row.lines.remove(i2 as usize);
-                            continue;
+                            l1.active = LineActive::ONE;
+                            changes.push((l1.p2, -l1.len.get_value()));
                         }
+                        row.lines.remove(i2 as usize);
+                    }
+                    // Updating both, adding pos to l2
+                    else{
+                        {
+                            let l2 = row.get(i2);
+                            changes.push((l2.p1, -2*l2.len.get_value()));
 
-                        else{ // L1 is same sign, L2 is opposite
-                            if row.get(i1).active == LineActive::P1{
-                                if row.get(i2).active == LineActive::P2{ // Removing both
-                                    row.lines.remove(max(i1 as usize, i2 as usize));
-                                    row.lines.remove(min(i1 as usize, i2 as usize));
-                                    continue;
-                                }
-                                else{ // Removing L1
-                                    row.get(i2).active = LineActive::P1;
+                            l2.active = LineActive::ONE;
+                            l2.len += 1;
 
-                                    row.lines.remove(i1 as usize);
-                                    continue;
-                                }
-                            }
-                            else if row.get(i2).active == LineActive::P2{ // Removing L2
-                                row.get(i1).active = LineActive::P2;
-                                row.get(i1).len += 1;
+                            changes.push((l2.p1, l2.len.get_value()));
+                        }
+                        {
+                            let l1 = row.get(i1);
 
-                                row.lines.remove(i2 as usize);
-                                continue;
-                            }
-                            else{ // Both remain
-                                row.get(i1).active = LineActive::P2;
-                                row.get(i1).len += 1;
-
-                                row.get(i2).active = LineActive::P1;
-                            }
+                            l1.active = LineActive::ONE;
+                            changes.push((l1.p2, -l1.len.get_value()));
                         }
                     }
-
-                    else if row.get(i2).sign == sign{ // L2 is same sign. L1 is opposite
-                        if row.get(i1).active == LineActive::P1{
-                            if row.get(i2).active == LineActive::P2{ // Removing both
-                                row.lines.remove(max(i1 as usize, i2 as usize));
-                                row.lines.remove(min(i1 as usize, i2 as usize));
-                                continue;
-                            }
-                            else{ // Removing L1
-                                row.get(i2).active = LineActive::P1;
-
-                                row.lines.remove(i1 as usize);
-                                continue;
-                            }
-                        }
-                        else if row.get(i2).active == LineActive::P2{ // Removing L2
-                            row.get(i1).active = LineActive::P2;
-
-                            row.get(i2).len += 1;
-                            row.lines.remove(i2 as usize);
-                            continue;
-                        }
-                        else{ // Both remain
-                            row.get(i1).active = LineActive::P2;
-                            
-                            row.get(i2).len += 1;
-                            row.get(i2).active = LineActive::P1;
-                        }
+                }
+            }
+            // Ending both at pos
+            else{
+                if row.get(i1).active == LineActive::ONE{
+                    // Both had only pos active -> removing them
+                    if row.get(i2).active == LineActive::ONE{
+                        row.lines.remove(max(i1 as usize, i2 as usize));
+                        row.lines.remove(min(i1 as usize, i2 as usize));
                     }
+                    // Removing l1, updating l2
+                    else{
+                        {
+                            let l2 = row.get(i2);
 
-                    else{ // Both are opposite sign
-                        if row.get(i1).active == LineActive::P1{
-                            if row.get(i2).active == LineActive::P2{ // Removing both
-                                row.lines.remove(max(i1 as usize, i2 as usize));
-                                row.lines.remove(min(i1 as usize, i2 as usize));
-                                continue;
-                            }
-                            else{ // Removing L1
-                                row.get(i2).active = LineActive::P1;
-
-                                row.lines.remove(i1 as usize);
-                                continue;
-                            }
+                            l2.active = LineActive::ONE;
+                            changes.push((l2.p1, -l2.len.get_value()));
                         }
-                        else if row.get(i2).active == LineActive::P2{ // Removing L2
-                            row.get(i1).active = LineActive::P2;
+                        row.lines.remove(i1 as usize);
+                    }
+                }
+                else{
+                    // Removing l2, updating l1
+                    if row.get(i2).active == LineActive::ONE{
+                        {
+                            let l1 = row.get(i1);
 
-                            row.lines.remove(i2 as usize);
-                            continue;
+                            l1.active = LineActive::ONE;
+                            changes.push((l1.p2, -l1.len.get_value()));
                         }
-                        else{ // Both remain
-                            row.get(i1).active = LineActive::P2;
-                            
-                            row.get(i2).active = LineActive::P1;
+                        row.lines.remove(i2 as usize);
+                    }
+                    // Updating both
+                    else{
+                        {
+                            let l2 = row.get(i2);
+
+                            l2.active = LineActive::ONE;
+                            changes.push((l2.p1, -l2.len.get_value()));
+                        }
+                        {
+                            let l1 = row.get(i1);
+
+                            l1.active = LineActive::ONE;
+                            changes.push((l1.p2, -l1.len.get_value()));
                         }
                     }
                 }
@@ -307,9 +457,8 @@ pub(crate) struct Line{
     len: u8
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum LineActive{
-    P1,
-    P2,
+    ONE,
     BOTH
 }

@@ -66,6 +66,12 @@ impl Algo {
         true
     }
 
+    pub fn print(&self){
+        self.print_board();
+        self.print_values();
+        self.print_lines();
+    }
+
     pub fn print_board(&self){
         for h in 0..20{
             print!("|");
@@ -76,6 +82,17 @@ impl Algo {
                     2 => print!("o|"),
                     _ => panic!("logic error!")
                 }
+            }
+            println!("")
+        }
+    }
+
+    pub fn print_values(&self){
+        let values = self.lines.get_values();
+        for h in 0..20{
+            print!("|");
+            for w in 0..20{
+                print!("{}|", values[w][h])
             }
             println!("")
         }
