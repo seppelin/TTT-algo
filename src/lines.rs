@@ -30,12 +30,10 @@ impl Lines {
     	let lu_rd = std::array::from_fn(|_| { LineRow::new() });
     	let ru_ld = std::array::from_fn(|_| { LineRow::new() });
 
-        Lines { lr: left_right, ud: up_down, lu_rd, ru_ld, values: [0; WIDTH*HEIGHT] }
+        Lines { lr: left_right, ud: up_down, lu_rd, ru_ld, values: Self::new_values() }
     }
 
     pub(crate) fn update_move(&mut self, pos: BoardPos, sign: bool) -> UpdateResult{
-        //self.print();
-        
         let update_rows: [*mut LineRow; 4] = [
             &mut self.lr[pos.h as usize],
             &mut self.ud[pos.w as usize],
@@ -55,9 +53,14 @@ impl Lines {
             UpdateResult::Continue(Changes{ value_changes, old_lines })
         }
         else{
-            //println!("WIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIN");
             UpdateResult::Win(Changes { old_lines, value_changes: Vec::new() })
         }
+    }
+
+    fn new_values() -> [i16; WIDTH*HEIGHT]{
+        let mut values = [0; WIDTH*HEIGHT];
+        values[WIDTH/2*HEIGHT+HEIGHT/2] = 1;
+        values
     }
 
     fn update_values(values: &mut [i16; WIDTH*HEIGHT], changes: &Vec<(usize, i16)>){

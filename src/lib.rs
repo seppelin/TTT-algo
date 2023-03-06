@@ -12,9 +12,10 @@ pub(crate) const DIRECTIONS: [BoardPos; 8] =
     BoardPos{ w: 1, h: -1 }, BoardPos{ w: -1, h: 1 }, // Right up; left down
 ];
 
-pub const WIDTH: usize = 4;
-pub const HEIGHT: usize = 4;
-pub const WIN_LEN: usize = 4;
+pub const WIDTH: usize = 20;
+pub const HEIGHT: usize = 20;
+pub const WIN_LEN: usize = 5;
+pub const MAX_DEPTH: usize = 5;
 pub const MAX_SCORE: isize = (WIDTH*HEIGHT+1) as isize;
 pub const MIN_SCORE: isize = -((WIDTH*HEIGHT+1) as isize);
 
@@ -89,7 +90,7 @@ impl Algo {
             match lines.update_move(m, next_sign){
                 UpdateResult::Continue(changes) => {
                     board[m.get_usize()] = next_sign as u8 + 1;
-                    let score = -negmax(&mut board, !next_sign, self.count + 1, -beta, -alpha, &mut lines);
+                    let score = -negmax(&mut board, !next_sign, self.count + 1, 2, -beta, -alpha, &mut lines);
 
                     lines.redo_changes(changes);
                     board[m.get_usize()] = 0;

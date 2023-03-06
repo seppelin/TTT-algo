@@ -1,4 +1,4 @@
-use crate::{WIDTH, HEIGHT, MAX_SCORE, MIN_SCORE, lines::{Lines, UpdateResult}, BoardPos};
+use crate::{WIDTH, HEIGHT, MAX_SCORE, MIN_SCORE, lines::{Lines, UpdateResult}, BoardPos, MAX_DEPTH};
 use std::cmp::max;
 
 const fn get_moves() -> [BoardPos; WIDTH*HEIGHT]{
@@ -16,17 +16,18 @@ pub(crate) fn negmax(
 	board: &mut [u8; WIDTH*HEIGHT],
 	sign: bool,
 	count: isize,
+    depth: usize,
 	mut alpha: isize,
     mut beta: isize,
 	lines: &mut Lines) -> isize
 {
 	if count == (WIDTH*HEIGHT-1) as isize { return 0; }
     let current_max_score = MAX_SCORE - count;
-
-    if current_max_score < beta{
+    if current_max_score <= beta{
         beta = current_max_score;
         if alpha >=  beta { return beta; }
     }
+    if depth == MAX_DEPTH { return 0; }
 
 	let moves = sorted_moves(lines.get_values());
     
@@ -38,7 +39,7 @@ pub(crate) fn negmax(
             UpdateResult::Continue(changes) => {
                 board[m.get_usize()] = sign as u8 + 1;
 
-                best_score = max(best_score, -negmax(board, !sign, count + 1, -beta, -alpha, lines));
+                best_score = max(best_score, -negmax(board, !sign, count + 1, depth + 1, -beta, -alpha, lines));
 
                 lines.redo_changes(changes);
                 board[m.get_usize()] = 0;
